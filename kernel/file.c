@@ -13,34 +13,47 @@
 #include "stat.h"
 #include "proc.h"
 
+struct file_list{
+  struct file file;
+  struct list lst;
+};
+
 struct devsw devsw[NDEV];
 struct {
   struct spinlock lock;
-  struct file file[NFILE];
+  struct list file;
 } ftable;
 
 void
 fileinit(void)
 {
   initlock(&ftable.lock, "ftable");
+  lst_init(&(ftable.file));
 }
 
 // Allocate a file structure.
 struct file*
 filealloc(void)
 {
-  struct file *f;
-
-  acquire(&ftable.lock);
-  for(f = ftable.file; f < ftable.file + NFILE; f++){
-    if(f->ref == 0){
-      f->ref = 1;
-      release(&ftable.lock);
-      return f;
-    }
+  struct file_list *fl;
+  fl = bd_malloc(sizeof(struct file_list));
+  fl->file.ref = 1;
+  if(fl)
+  {
+    acquire(&ftable.lock);
+    lst_push(&(ftable.file),&(fl->lst));
+    // for(f = ftable.file; f < ftable.file + NFILE; f++){
+    //   if(f->ref == 0){
+    //     f->ref = 1;
+    //     release(&ftable.lock);
+    //     return f;
+    //   }
+    // }
+    release(&ftable.lock);
+    return (struct file *)fl;
+  }else{
+    return 0;
   }
-  release(&ftable.lock);
-  return 0;
 }
 
 // Increment ref count for file f.
@@ -60,7 +73,7 @@ void
 fileclose(struct file *f)
 {
   struct file ff;
-
+  struct file_list *fl;
   acquire(&ftable.lock);
   if(f->ref < 1)
     panic("fileclose");
@@ -71,7 +84,10 @@ fileclose(struct file *f)
   ff = *f;
   f->ref = 0;
   f->type = FD_NONE;
+  fl = (struct file_list *) f;
+  lst_remove(&(fl->lst));
   release(&ftable.lock);
+  bd_free(fl);
 
   if(ff.type == FD_PIPE){
     pipeclose(ff.pipe, ff.writable);
