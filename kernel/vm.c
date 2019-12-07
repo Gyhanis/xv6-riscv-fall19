@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -52,6 +54,7 @@ kvminit()
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -78,8 +81,10 @@ kvminithart()
 static pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  if(va >= MAXVA)
+  if(va >= MAXVA){
+    // vmprint(myproc()->pagetable);
     panic("walk");
+  }
 
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
@@ -106,7 +111,6 @@ walkaddr(pagetable_t pagetable, uint64 va)
 
   if(va >= MAXVA)
     return 0;
-
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return 0;
@@ -161,8 +165,11 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   a = PGROUNDDOWN(va);
   last = PGROUNDDOWN(va + size - 1);
   for(;;){
+    // vmprint(pagetable);
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
+    // vmprint(pagetable);
+    // printf("%d\n",*pte & PTE_V);
     if(*pte & PTE_V)
       panic("remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
@@ -188,10 +195,12 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 size, int do_free)
   last = PGROUNDDOWN(va + size - 1);
   for(;;){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      goto NEXT;
+      // panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0){
-      printf("va=%p pte=%p\n", a, *pte);
-      panic("uvmunmap: not mapped");
+      // printf("va=%p pte=%p\n", a, *pte);
+      // panic("uvmunmap: not mapped");
+      goto NEXT;
     }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
@@ -200,6 +209,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 size, int do_free)
       kfree((void*)pa);
     }
     *pte = 0;
+NEXT:
     if(a == last)
       break;
     a += PGSIZE;
@@ -326,9 +336,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      // panic("uvmcopy: pte should exist");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      // panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -455,23 +467,26 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 void vmprint(pagetable_t pt){
   pagetable_t ptt[2];
   pte_t pte;
+  int count = 0;
   printf("page table %p\n",pt);
   for(int i = 0; i < 512; i++){
     pte = pt[i];
     if(pte & PTE_V){
       ptt[0] = (pagetable_t)PTE2PA(pte);
-      printf("..%d: pte %p pa %p\n",pte,ptt[0]);
+      printf("..%d: pte %p pa %p\n",i,pte,ptt[0]);
       if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
           for(int j = 0; j < 512; j++){
             pte = ptt[0][j];
             if(pte & PTE_V){
               ptt[1] = (pagetable_t)PTE2PA(pte);
-              printf(".. ..%d: pte %p pa %p\n",pte,ptt[1]);
+              printf(".. ..%d: pte %p pa %p\n",j,pte,ptt[1]);
               if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
                   for(int k = 0; k < 512; k++){
-                    pte = ptt[1][j];
+                    pte = ptt[1][k];
                     if(pte & PTE_V){
-                      printf(".. .. ..%d: pte %p pa %p\n",pte,PTE2PA(pte));
+                      printf(".. .. ..%d: pte %p pa %p\n",k,pte,PTE2PA(pte));
+                      count++;
+                      if(count >= 32) return;
                     }
                   }
               }

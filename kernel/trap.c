@@ -37,7 +37,6 @@ void
 usertrap(void)
 {
   int which_dev = 0;
-
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
@@ -49,7 +48,6 @@ usertrap(void)
   
   // save user program counter.
   p->tf->epc = r_sepc();
-  
   if(r_scause() == 8){
     // system call
 
@@ -65,6 +63,34 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if((r_scause() == 13) || (r_scause() == 15)){
+    uint64 va;
+    pagetable_t pt;
+    char *mem;
+    pt = p->pagetable;
+    // vmprint(pt);
+    if((uint64)r_stval() > p->sz){
+      p->killed = 1;
+    }else{
+      mem = kalloc();
+      if(mem == 0){
+        printf("kalloc failed,terminating process.\n");
+        p->killed = 1;
+      }else{
+          va = PGROUNDDOWN((uint64)r_stval());
+          memset(mem,0,PGSIZE);
+          // printf("start mappages\n");
+          // vmprint(pt);
+          // printf("%d\n",va);
+          if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+            printf("page mapping failed,terminating process.\n");
+            kfree(mem);
+            p->killed = 1;
+          }
+          // vmprint(pt);
+          // printf("end mappages\n");
+      }
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -144,9 +170,43 @@ kerneltrap()
     panic("kerneltrap: interrupts enabled");
 
   if((which_dev = devintr()) == 0){
+
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
-    panic("kerneltrap");
+
+    if((r_scause() == 13) || (r_scause() == 15)){
+      struct proc *p = myproc();
+      uint64 va;
+      pagetable_t pt;
+      char *mem;
+      pt = p->pagetable;
+      // vmprint(pt);
+      if(r_stval() > p->sz){
+        p->killed = 1;
+      }else{
+        mem = kalloc();
+        if(mem == 0){
+          printf("kalloc failed,terminating process.\n");
+          p->killed = 1;
+        }else{
+            va = PGROUNDDOWN(r_stval());
+            memset(mem,0,PGSIZE);
+            // printf("start mappages\n");
+            if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U)){
+              printf("page mapping failed,terminating process.\n");
+              kfree(mem);
+              p->killed = 1;
+            }
+            // printf("end mappages\n");
+        }
+      }
+      if(p->killed) 
+        exit(-1);
+    }else{
+
+      panic("kerneltrap");
+    }
+
   }
 
   // give up the CPU if this is a timer interrupt.
