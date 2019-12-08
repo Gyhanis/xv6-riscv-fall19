@@ -171,7 +171,10 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     // vmprint(pagetable);
     // printf("%d\n",*pte & PTE_V);
     if(*pte & PTE_V)
+    {
+      printf("%p\n",*pte);
       panic("remap");
+    }
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;

@@ -48,6 +48,7 @@ usertrap(void)
   
   // save user program counter.
   p->tf->epc = r_sepc();
+  // printf("%x ",r_scause());
   if(r_scause() == 8){
     // system call
 
@@ -66,31 +67,53 @@ usertrap(void)
   } else if((r_scause() == 13) || (r_scause() == 15)){
     uint64 va;
     pagetable_t pt;
+    pagetable_t pagetable;
     char *mem;
-    pt = p->pagetable;
     // vmprint(pt);
-    if((uint64)r_stval() > p->sz){
+    if((uint64)r_stval() >= p->sz ){
       p->killed = 1;
-    }else{
-      mem = kalloc();
-      if(mem == 0){
-        printf("kalloc failed,terminating process.\n");
-        p->killed = 1;
-      }else{
-          va = PGROUNDDOWN((uint64)r_stval());
-          memset(mem,0,PGSIZE);
-          // printf("start mappages\n");
-          // vmprint(pt);
-          // printf("%d\n",va);
-          if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U) != 0){
-            printf("page mapping failed,terminating process.\n");
-            kfree(mem);
-            p->killed = 1;
-          }
-          // vmprint(pt);
-          // printf("end mappages\n");
+      printf("trap:addr out of range,terminating process\n");
+      goto KILL;
+    }
+    pt = p->pagetable;
+    pagetable = pt;
+    va = PGROUNDDOWN((uint64)r_stval());
+
+    for(int level = 2; level > 0; level--) {
+      pte_t *pte = &pagetable[PX(level, va)];
+      if(*pte & PTE_V) {
+        pagetable = (pagetable_t)PTE2PA(*pte);
+      } else {
+        pagetable = 0;
+        break;
       }
     }
+    if(pagetable && (pagetable[PX(0,va)] & PTE_V)){
+      printf("trap:unauthorized access,terminating process\n");
+      p->killed = 1;
+      goto KILL;
+    }
+
+    mem = kalloc();
+    if(mem == 0){
+      printf("kalloc failed,terminating process.\n");
+      p->killed = 1;
+      goto KILL;
+    }
+
+    memset(mem,0,PGSIZE);
+    printf("start mappages\n");
+    // vmprint(pt);
+    // printf("%d\n",va);
+    if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      printf("page mapping failed,terminating process.\n");
+      kfree(mem);
+      p->killed = 1;
+      goto KILL;
+    }
+    // vmprint(pt);
+    printf("end mappages\n");
+
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -98,7 +121,7 @@ usertrap(void)
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
-
+KILL:
   if(p->killed)
     exit(-1);
 
@@ -169,43 +192,45 @@ kerneltrap()
   if(intr_get() != 0)
     panic("kerneltrap: interrupts enabled");
 
+  // printf("%d",scause);
+
   if((which_dev = devintr()) == 0){
 
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
 
-    if((r_scause() == 13) || (r_scause() == 15)){
-      struct proc *p = myproc();
-      uint64 va;
-      pagetable_t pt;
-      char *mem;
-      pt = p->pagetable;
-      // vmprint(pt);
-      if(r_stval() > p->sz){
-        p->killed = 1;
-      }else{
-        mem = kalloc();
-        if(mem == 0){
-          printf("kalloc failed,terminating process.\n");
-          p->killed = 1;
-        }else{
-            va = PGROUNDDOWN(r_stval());
-            memset(mem,0,PGSIZE);
-            // printf("start mappages\n");
-            if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U)){
-              printf("page mapping failed,terminating process.\n");
-              kfree(mem);
-              p->killed = 1;
-            }
-            // printf("end mappages\n");
-        }
-      }
-      if(p->killed) 
-        exit(-1);
-    }else{
+    // if((r_scause() == 13) || (r_scause() == 15)){
+    //   struct proc *p = myproc();
+    //   uint64 va;
+    //   pagetable_t pt;
+    //   char *mem;
+    //   pt = p->pagetable;
+    //   // vmprint(pt);
+    //   if(r_stval() > p->sz){
+    //     p->killed = 1;
+    //   }else{
+    //     mem = kalloc();
+    //     if(mem == 0){
+    //       printf("kalloc failed,terminating process.\n");
+    //       p->killed = 1;
+    //     }else{
+    //         va = PGROUNDDOWN(r_stval());
+    //         memset(mem,0,PGSIZE);
+    //         // printf("start mappages\n");
+    //         if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U)){
+    //           printf("page mapping failed,terminating process.\n");
+    //           kfree(mem);
+    //           p->killed = 1;
+    //         }
+    //         // printf("end mappages\n");
+    //     }
+    //   }
+    //   if(p->killed) 
+    //     exit(-1);
+    // }else{
 
       panic("kerneltrap");
-    }
+    // }
 
   }
 
