@@ -75,10 +75,10 @@ usertrap(void)
       printf("trap:addr out of range,terminating process\n");
       goto KILL;
     }
-    pt = p->pagetable;
-    pagetable = pt;
     va = PGROUNDDOWN((uint64)r_stval());
 
+    pt = p->pagetable;
+    pagetable = pt;
     for(int level = 2; level > 0; level--) {
       pte_t *pte = &pagetable[PX(level, va)];
       if(*pte & PTE_V) {
@@ -102,17 +102,12 @@ usertrap(void)
     }
 
     memset(mem,0,PGSIZE);
-    printf("start mappages\n");
-    // vmprint(pt);
-    // printf("%d\n",va);
     if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U) != 0){
       printf("page mapping failed,terminating process.\n");
       kfree(mem);
       p->killed = 1;
       goto KILL;
     }
-    // vmprint(pt);
-    printf("end mappages\n");
 
   } else if((which_dev = devintr()) != 0){
     // ok

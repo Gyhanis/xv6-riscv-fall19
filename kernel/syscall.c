@@ -61,23 +61,15 @@ argint(int n, int *ip)
   return 0;
 }
 
-static pte_t *
-walk(pagetable_t pagetable, uint64 va, int alloc)
+pte_t *
+swalk(pagetable_t pagetable, uint64 va)
 {
-  if(va >= MAXVA){
-    // vmprint(myproc()->pagetable);
-    panic("walk");
-  }
-
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
-        return 0;
-      memset(pagetable, 0, PGSIZE);
-      *pte = PA2PTE(pagetable) | PTE_V;
+      return 0;
     }
   }
   return &pagetable[PX(0, va)];
@@ -95,21 +87,21 @@ argaddr(int n, uint64 *ip)
     return 0;
   }
   pagetable_t pt = myproc()->pagetable;
-  pte_t *pte = walk(pt,*ip,0);
+  pte_t *pte = swalk(pt,*ip);
   if(pte == 0 || (*pte & PTE_V) == 0){
     // printf("%p\n",pte);
     uint64 va;
     char *mem;
     mem = kalloc();
     if(mem == 0){
-      printf("kalloc failed,terminating process.\n");
+      printf("argaddr:kalloc failed,terminating process.\n");
       myproc()->killed = 1;
       exit(-1);
     }else{
         va = PGROUNDDOWN(*ip);
         memset(mem,0,PGSIZE);
         if(mappages(pt,va,PGSIZE,(uint64)mem,PTE_W|PTE_X|PTE_R|PTE_U) != 0){
-          printf("page mapping failed,terminating process.\n");
+          printf("argaddr:page mapping failed,terminating process.\n");
           kfree(mem);
           myproc()->killed = 1;
           exit(-1);
