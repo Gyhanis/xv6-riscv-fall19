@@ -296,7 +296,6 @@ ilock(struct inode *ip)
     panic("ilock");
 
   acquiresleep(&ip->lock);
-
   if(ip->valid == 0){
     bp = bread(ip->dev, IBLOCK(ip->inum, sb));
     dip = (struct dinode*)bp->data + ip->inum%IPB;

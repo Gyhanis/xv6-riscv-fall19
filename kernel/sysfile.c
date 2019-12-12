@@ -87,7 +87,7 @@ sys_write(void)
 
   if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0)
     return -1;
-
+  
   return filewrite(f, p, n);
 }
 
@@ -296,6 +296,7 @@ sys_open(void)
     return -1;
 
   begin_op(ROOTDEV);
+  n = 0;
 
   if(omode & O_CREATE){
     ip = create(path, T_FILE, 0, 0);
@@ -304,6 +305,7 @@ sys_open(void)
       return -1;
     }
   } else {
+start:
     if((ip = namei(path)) == 0){
       end_op(ROOTDEV);
       return -1;
@@ -320,6 +322,22 @@ sys_open(void)
     iunlockput(ip);
     end_op(ROOTDEV);
     return -1;
+  }
+
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+    // printf("current file:%s\n",path);
+    for(int i = 0; i < MAXPATH; i++)
+      path[i] = 0;
+    readi(ip,0,(uint64)path,0,MAXPATH);
+    // printf("target file:%s\n",path);
+    iunlockput(ip);
+    if(n >= 10){
+      printf("open:link too deep\n");
+      end_op(ROOTDEV);
+      return -1;
+    }
+    n++;
+    goto start;
   }
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
@@ -483,3 +501,33 @@ sys_pipe(void)
   return 0;
 }
 
+uint64
+sys_symlink(void)
+{
+  char path[MAXPATH];
+  char target[MAXPATH];
+  struct inode *ip;
+  int r;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op(ROOTDEV);
+
+  ip = create(path, T_SYMLINK, 0, 0);
+  if(ip == 0){
+    end_op(ROOTDEV);
+    return -1;
+  } 
+
+  r = writei(ip, 0, (uint64)target, 0, MAXPATH);
+  if(r<0){
+    printf("sym_link:error on writing\n");
+    iunlockput(ip);
+    end_op(ROOTDEV);
+    return -1;
+  }
+  iunlockput(ip);
+  end_op(ROOTDEV);
+  return 0;
+}
