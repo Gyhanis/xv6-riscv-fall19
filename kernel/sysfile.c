@@ -639,38 +639,44 @@ sys_munmap(void)
 {
   uint64 length;
   uint64 addr,end;
-  int fs,fe;
-  void* p;
+  struct mfile* mf;
+  int fd;
   int i;
   struct mmanager *man = &(myproc()->man);
+  pagetable_t pagetable = myproc()->pagetable;
+  
   if(argaddr(1,&length) < 0 || argaddr(0,&addr) < 0 ){
     printf("sys_munmap:load argument failed\n");
     return -1;
   }
 
   end = addr + length;
-  fs = findFileE((void*)addr,man,0);
-  if(fs >= 0){
+  fd = findFileE((void*)addr,man,0);
+  if(fd >= 0){
+    mf = &(man->mfile[fd]);
     while(addr < end){
-      void* nextpage = (void*) (PGROUNDDOWN(addr) + PGSIZE);
-      p = man->mfile[fs].end;
+      uint64 p;
+      uint64 nextpage = (PGROUNDDOWN(addr) + PGSIZE);
+      p = (uint64) mf->end;
       p = (p > nextpage)?nextpage:p;
-      p = (p > (void*) end)?(void*)end:p;
-      if(walkaddr(myproc()->pagetable,addr)){
-        if((man->mfile[fs].prop & PROT_WRITE) && !(man->mfile[fs].prop & 1)){
-          man->mfile[fs].f->off = man->mfile[fs].off;
-          filewrite(man->mfile[fs].f,addr,(uint64)(p-addr));
+      p = (p > end)?end:p;
+      if(walkaddr(pagetable,addr)){
+        if((mf->prop & PROT_WRITE) && !(mf->prop & 1)){
+          uint64 temp = mf->f->off;
+          mf->f->off = mf->off;
+          filewrite(mf->f,addr,(uint64)(p-addr));
+          mf->f->off = temp;
         }
-        if(p == man->mfile[fs].end || p == nextpage){
-          uvmunmap(myproc()->pagetable,PGROUNDDOWN(addr),PGSIZE,1);
+        if(p == (uint64)mf->end || p == nextpage){
+          uvmunmap(pagetable,PGROUNDDOWN(addr),PGSIZE,1);
           man->full = 0;
         }
       }
 
-      if(p == man->mfile[fs].end){
-        fileclose(man->mfile[fs].f);
-        man->mfile[fs].f = 0;
-        if(findFileE(nextpage,man,0)){
+      if(p == (uint64)mf->end){
+        fileclose(mf->f);
+        mf->f = 0;
+        if(findFileE((void*)nextpage,man,0)){
           addr = PHYSTOP;
           if(man->tail == (uint64)a2i(nextpage)){
             man->tail = 0;
@@ -679,51 +685,55 @@ sys_munmap(void)
           return 0;
         }
       }else{
-        man->mfile[fs].off += (uint64)p - addr;
-        man->mfile[fs].start = p;
+        mf->off += (uint64)p - addr;
+        mf->start = (void*)p;
       }
       man->head++;
       addr = (uint64)nextpage;
     }
     return 0;
   }else{
-    fe = findFileE((void*)end,man,1);
-    if(fe == -1){
+    fd = findFileE((void*)end,man,1);
+    if(fd == -1){
       printf("sys_munmap:not edge, can't ummap\n");
       return -1;
     }else{
+      mf = &(man->mfile[fd]);
       while(addr < end){
-        void* prevpage = (void*) (PGROUNDDOWN(end-1));
-        p = man->mfile[fe].start;
-        p = (p > prevpage) ? p : prevpage;
-        p = (p > (void*) end) ? p : (void*) end;
-        if(walkaddr(myproc()->pagetable,addr)){
-          if((man->mfile[fe].prop & PROT_WRITE) && !(man->mfile[fs].prop & 1)){
-            man->mfile[fe].f->off = man->mfile[fe].off + (uint64)(p - man->mfile[fe].start);
-            filewrite(man->mfile[fe].f,(uint64)p,end - (uint64)p);
+        uint64 p;
+        uint64 prevpage = (uint64) (PGROUNDDOWN(end-1));
+        p = (uint64) mf->start;
+        p = (p > prevpage) ?  p : prevpage;
+        p = (p > end) ?       p : end;
+        if(walkaddr(pagetable,addr)){
+          if((mf->prop & PROT_WRITE) && !(mf->prop & 1)){
+            uint64 tmp = mf->f->off;
+            mf->f->off = mf->off + (p - (uint64)mf->start);
+            filewrite(mf->f, p, end - p);
+            mf->f->off = tmp;
           }
-          if(p == man->mfile[fe].start || p == prevpage){
-            uvmunmap(myproc()->pagetable,(uint64)prevpage,PGSIZE,1);
+          if(p == (uint64)mf->start || p == prevpage){
+            uvmunmap(pagetable, prevpage, PGSIZE,1);
             man->full = 0;
           }
         }
 
-        if((uint64)p == PHYSTOP){
-          void* tmp;
-          fileclose(man->mfile[fe].f);
-          man->mfile[fe].f = 0;
-          tmp = (void*)PHYSTOP;
+        if(p == PHYSTOP){
+          uint64 tmp;
+          fileclose(mf->f);
+          mf->f = 0;
+          tmp = PHYSTOP;
           for(i = 0; i < NOFILE; i++){
-            tmp = (tmp < (void*)(PGROUNDDOWN((uint64)man->mfile[i].end)+PGSIZE))?(void*)(PGROUNDDOWN((uint64)man->mfile[i].end)+PGSIZE):tmp;
+            tmp = (tmp < (PGROUNDDOWN((uint64)man->mfile[i].end)+PGSIZE))?(PGROUNDDOWN((uint64)man->mfile[i].end)+PGSIZE):tmp;
           }
-          man->tail = (uint64)a2i(tmp);
+          man->tail = a2i(tmp);
           man->tail %= 32;
           return 0;
         }else{
-          man->mfile[fe].end = p;
+          mf->end = (void*)p;
         }
         man->tail--;
-        end = (uint64)prevpage;
+        end = prevpage;
       }
       return 0;
     }
