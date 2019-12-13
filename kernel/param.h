@@ -13,7 +13,7 @@
 #define MAXPATH      128   // maximum file path name
 #define NDISK        2
 
-#define PROT_READ    1
+#define PROT_READ    4
 #define PROT_WRITE   2
 #define MAP_PRIVATE  1
 #define MAP_SHARED   0

@@ -207,6 +207,34 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 size, int do_free)
   }
 }
 
+void
+mmapfree(pagetable_t pagetable)
+{
+  uint64 a, last;
+  pte_t *pte;
+  uint64 pa;
+
+  a = PHYSTOP;
+  last = PHYSTOP + (32<<PGSHIFT);
+  for(;;){
+    if((pte = walk(pagetable, a, 0)) == 0)
+      goto NEXT;
+    if((*pte & PTE_V) == 0){
+      goto NEXT;
+    }
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("mmapfree: not a leaf");
+
+    pa = PTE2PA(*pte);
+    kfree((void*)pa);
+    *pte = 0;
+NEXT:
+    if(a == last)
+      break;
+    a += PGSIZE;
+  }
+}
+
 // create an empty user page table.
 pagetable_t
 uvmcreate()
@@ -307,6 +335,7 @@ void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, 0, sz, 1);
+  mmapfree(pagetable);
   freewalk(pagetable);
 }
 

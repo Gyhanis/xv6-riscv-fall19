@@ -122,7 +122,11 @@ found:
   memset(&p->context, 0, sizeof p->context);
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  memset(&(p->man),0,sizeof(struct mmanager));
+  p->man.full = 0;
+  p->man.head = 0;
+  p->man.tail = 0;
+  p->man.len = 32;
   return p;
 }
 
@@ -146,6 +150,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  memset(&(p->man),0,sizeof(struct mmanager));
 }
 
 // Create a page table for a given process,
@@ -262,6 +267,12 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  np->man = p->man;
+  for(i = 0; i < NOFILE; i++){
+    if(p->man.mfile[i].f)
+      filedup(p->man.mfile[i].f);
+  }
 
   np->parent = p;
 

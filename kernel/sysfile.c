@@ -16,6 +16,8 @@
 #include "file.h"
 #include "fcntl.h"
 
+#include "memlayout.h"
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -390,7 +392,7 @@ sys_chdir(void)
   char path[MAXPATH];
   struct inode *ip;
   struct proc *p = myproc();
-  
+
   begin_op(ROOTDEV);
   if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
     end_op(ROOTDEV);
@@ -483,3 +485,247 @@ sys_pipe(void)
   return 0;
 }
 
+#define i2a(x) (((x)<<PGSHIFT) + PHYSTOP)
+#define a2i(x) ((((uint64)x)-PHYSTOP) >> PGSHIFT)
+uint64
+sys_mmap(void)
+{
+  uint64 length,len;
+  int prot;
+  int flags;
+  int fd;
+  uint64 off;
+  uint64 addr;
+  struct proc *p;
+  struct mmanager *man;
+  struct file *f;
+  int i;
+  int skip;
+  if(argaddr(1,&length) < 0 || argint(2,&prot) < 0 || argint(3,&flags) < 0 ||
+    argint(4,&fd) < 0 || argaddr(5,&off) < 0){
+    printf("sys_mmap:load argument failed\n");
+    return -1;
+  }
+  p = myproc();
+  man = &(p->man);
+  if( man->full && man->head == man->tail){
+    printf("sys_mmap:mmemory is full\n");
+    return -1;
+  }
+  len = length;
+  if(length % PGSIZE){
+    length >>= PGSHIFT;
+    length ++;
+  }else
+    length >>= PGSHIFT;
+
+  // alen = man->head - man->tail;
+  // if(alen <= 0)
+  //   alen += 32;
+
+
+  // if(length > alen){
+  //   printf("sys_mmap:mmemory is not enough\n");
+  //   return -1;
+  // }
+
+  if(man->head < man->tail){
+    if((man->len - man->tail) > length){
+      skip = 0;
+    }else if(man->head > length){
+      skip = 1;
+    }else{
+      printf("sys_mmap:mmemory is not enough\n");
+      return -1;
+    }
+  }else if(man->head == man->tail){
+    if(length <= man->len){
+      skip = 0;
+    }else{
+      printf("sys_mmap:mmemory is not enough\n");
+      return -1;
+    }
+  }else{
+    if((man->head-man->tail) >= length){
+      skip = 0;
+    }else{
+      printf("sys_mmap:mmemory is not enough\n");
+      return -1;
+    }
+  }
+
+  for(i = 0; i < NOFILE; i++){
+    if(man->mfile[i].f == 0)
+      break;
+  }
+  if(i == NOFILE){
+    printf("sys_mmap:files being mapped are too many\n");
+    return -1;
+  }
+
+  f = p->ofile[fd];
+  if(f == 0){
+    printf("sys_mmap:invalid file descriptor\n");
+    return -1;
+  }
+
+  if(prot == 0){
+    printf("sys_mmap:strange prot\n");
+    return -1;
+  }
+
+  if(prot & PROT_READ){
+    if(f->readable == 0){
+      printf("sys_mmap:file not readable\n");
+      return -1;
+    }
+  }
+
+  if(prot & PROT_WRITE && (flags == MAP_SHARED)){
+    if(f->writable == 0){
+      printf("sys_mmap:file not writable\n");
+      return -1;
+    }
+  }
+
+  if(skip){
+    addr = PHYSTOP;
+    man->tail = 0;
+  }else{
+    addr = PHYSTOP + (man->tail << PGSHIFT);
+  }
+  man->mfile[i].f = f;
+  man->mfile[i].prop = prot | flags;
+  man->mfile[i].start = (void*)i2a(man->tail);
+  man->tail += length;
+  man->mfile[i].end = man->mfile[i].start + len;
+  man->mfile[i].off = off;
+  filedup(f);
+  if(man->head == man->tail)
+    man->full = 1;
+  return addr;
+}
+
+int findFileE(void* va,struct mmanager *man,int isEnd){
+  int i;
+  if(isEnd){
+    for(i = 0; i < NOFILE; i++){
+      if(man->mfile[i].end == va){
+        return i;
+      }
+    }
+  }else{
+    for(i = 0; i < NOFILE; i++){
+      if(man->mfile[i].start == va){
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+// int findFile(void* va,struct mmanager *man){
+//   int i;
+//   for (i = 0; i < NOFILE; i++){
+//     if(va >= man->mfile[i].start && va < man->mfile[i].end){
+//       return i;
+//     }
+//   }
+//   return -1;
+// }
+
+uint64
+sys_munmap(void)
+{
+  uint64 length;
+  uint64 addr,end;
+  int fs,fe;
+  void* p;
+  int i;
+  struct mmanager *man = &(myproc()->man);
+  if(argaddr(1,&length) < 0 || argaddr(0,&addr) < 0 ){
+    printf("sys_munmap:load argument failed\n");
+    return -1;
+  }
+
+  end = addr + length;
+  fs = findFileE((void*)addr,man,0);
+  if(fs >= 0){
+    while(addr < end){
+      void* nextpage = (void*) (PGROUNDDOWN(addr) + PGSIZE);
+      p = man->mfile[fs].end;
+      p = (p > nextpage)?nextpage:p;
+      p = (p > (void*) end)?(void*)end:p;
+      if(walkaddr(myproc()->pagetable,addr)){
+        if((man->mfile[fs].prop & PROT_WRITE) && !(man->mfile[fs].prop & 1)){
+          man->mfile[fs].f->off = man->mfile[fs].off;
+          filewrite(man->mfile[fs].f,addr,(uint64)(p-addr));
+        }
+        if(p == man->mfile[fs].end || p == nextpage){
+          uvmunmap(myproc()->pagetable,PGROUNDDOWN(addr),PGSIZE,1);
+          man->full = 0;
+        }
+      }
+
+      if(p == man->mfile[fs].end){
+        fileclose(man->mfile[fs].f);
+        man->mfile[fs].f = 0;
+        if(findFileE(nextpage,man,0)){
+          addr = PHYSTOP;
+          if(man->tail == (uint64)a2i(nextpage)){
+            man->tail = 0;
+          }
+          man->head = 0;
+          return 0;
+        }
+      }else{
+        man->mfile[fs].off += (uint64)p - addr;
+        man->mfile[fs].start = p;
+      }
+      man->head++;
+      addr = (uint64)nextpage;
+    }
+    return 0;
+  }else{
+    fe = findFileE((void*)end,man,1);
+    if(fe == -1){
+      printf("sys_munmap:not edge, can't ummap\n");
+      return -1;
+    }else{
+      while(addr < end){
+        void* prevpage = (void*) (PGROUNDDOWN(end-1));
+        p = man->mfile[fe].start;
+        p = (p > prevpage) ? p : prevpage;
+        p = (p > (void*) end) ? p : (void*) end;
+        if(walkaddr(myproc()->pagetable,addr)){
+          if((man->mfile[fe].prop & PROT_WRITE) && !(man->mfile[fs].prop & 1)){
+            man->mfile[fe].f->off = man->mfile[fe].off + (uint64)(p - man->mfile[fe].start);
+            filewrite(man->mfile[fe].f,(uint64)p,end - (uint64)p);
+          }
+          if(p == man->mfile[fe].start || p == prevpage){
+            uvmunmap(myproc()->pagetable,(uint64)prevpage,PGSIZE,1);
+            man->full = 0;
+          }
+        }
+
+        if((uint64)p == PHYSTOP){
+          void* tmp;
+          fileclose(man->mfile[fe].f);
+          man->mfile[fe].f = 0;
+          tmp = (void*)PHYSTOP;
+          for(i = 0; i < NOFILE; i++){
+            tmp = (tmp < (void*)(PGROUNDDOWN((uint64)man->mfile[i].end)+PGSIZE))?(void*)(PGROUNDDOWN((uint64)man->mfile[i].end)+PGSIZE):tmp;
+          }
+          man->tail = (uint64)a2i(tmp);
+          man->tail %= 32;
+          return 0;
+        }else{
+          man->mfile[fe].end = p;
+        }
+        man->tail--;
+        end = (uint64)prevpage;
+      }
+      return 0;
+    }
+  }
+}

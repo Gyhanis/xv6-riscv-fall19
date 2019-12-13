@@ -60,7 +60,6 @@ void
 fileclose(struct file *f)
 {
   struct file ff;
-
   acquire(&ftable.lock);
   if(f->ref < 1)
     panic("fileclose");

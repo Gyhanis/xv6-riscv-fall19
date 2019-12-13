@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -30,6 +33,16 @@ void
 trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
+}
+
+int findFile(void* va,struct mmanager *man){
+  int i;
+  for(i = 0; i < NOFILE; i++){
+    if(man->mfile[i].start <= va && man->mfile[i].end > va){
+      return i;
+    }
+  }
+  return -1;
 }
 
 //
@@ -68,16 +81,63 @@ usertrap(void)
     intr_on();
 
     syscall();
+  }else if(r_scause() == 13||r_scause() == 15){
+    // panic("checkpoint");
+    uint64 addr = r_stval();
+    void* mem;
+    struct mmanager *man = &(p->man);
+    int i;
+    int perm;
+    uint64 off;
+
+    off = walkaddr(myproc()->pagetable,addr);
+    if(off){
+      printf("usertrap():unauthorized access at %p\n",addr);
+      goto end;
+    }
+
+    if((i =findFile((void*)addr,man)) < 0){
+      printf("usertrap():invalid access at %p\n",r_stval());
+      goto end;
+    }
+
+    mem = kalloc();
+    // printf("mem:%p\n",mem);
+    if(mem == 0){
+      printf("usertrap():kalloc failed,terminating process\n");
+      goto end;
+    }
+
+    perm = PTE_U;
+    if(man->mfile[i].prop & PROT_READ) perm |= PTE_R;
+    if(man->mfile[i].prop & PROT_WRITE) perm |= PTE_W;
+    
+    addr = PGROUNDDOWN(addr);
+    off = addr - (uint64)man->mfile[i].start;
+    off += man->mfile[i].off;
+    memset(mem, 0, PGSIZE);
+  //   printf("%p\n",perm);
+    if(mappages(p->pagetable, addr, PGSIZE,(uint64)mem,perm) != 0){
+      kfree(mem);
+      printf("usertrap():map failed, terminating process\n");
+      goto end;
+    }
+    readi(man->mfile[i].f->ip,1,addr,off,PGSIZE);
+  //   int r;
+  //   r = readi(man->mfile[i].f->ip,1,addr,off,PGSIZE);
+  //   printf("%d\n",r);
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
     printf("usertrap(): unexpected scause %p (%s) pid=%d\n", r_scause(), scause_desc(r_scause()), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+end:
     p->killed = 1;
   }
 
-  if(p->killed)
+  if(p->killed){
     exit(-1);
+  }
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)

@@ -113,7 +113,7 @@ mmap_test(void)
   if (p == MAP_FAILED)
     err("mmap (1)");
   _v1(p);
-  if ((long)munmap(p, PGSIZE*2) == -1)
+  if (munmap(p, PGSIZE*2) == -1)
     err("munmap (1)");
 
   // should be able to map file opened read-only with private writable
@@ -126,7 +126,7 @@ mmap_test(void)
   _v1(p);
   for (i = 0; i < PGSIZE*2; i++)
     p[i] = 'Z';
-  if ((long)munmap(p, PGSIZE*2) == -1)
+  if (munmap(p, PGSIZE*2) == -1)
     err("munmap (2)");
 
   // check that mmap doesn't allow read/write mapping of a
@@ -157,7 +157,7 @@ mmap_test(void)
     p[i] = 'Z';
 
   // unmap just the first two of three pages of mapped memory.
-  if ((long)munmap(p, PGSIZE*2) == -1)
+  if (munmap(p, PGSIZE*2) == -1)
     err("munmap (3)");
 
   // check that the writes to the mapped memory were
@@ -175,7 +175,7 @@ mmap_test(void)
     err("close");
 
   // unmap the rest of the mapped memory.
-  if ((long)munmap(p+PGSIZE*2, PGSIZE) == -1)
+  if (munmap(p+PGSIZE*2, PGSIZE) == -1)
     err("munmap (4)");
 
   //
