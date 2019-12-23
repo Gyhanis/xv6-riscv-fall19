@@ -676,7 +676,7 @@ sys_munmap(void)
       if(p == (uint64)mf->end){
         fileclose(mf->f);
         mf->f = 0;
-        if(findFileE((void*)nextpage,man,0)){
+        if(findFileE((void*)nextpage,man,0)<=0){
           addr = PHYSTOP;
           if(man->tail == (uint64)a2i(nextpage)){
             man->tail = 0;
