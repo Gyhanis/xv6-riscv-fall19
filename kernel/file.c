@@ -37,9 +37,9 @@ filealloc(void)
 {
   struct file_list *fl;
   fl = bd_malloc(sizeof(struct file_list));
-  fl->file.ref = 1;
   if(fl)
   {
+    fl->file.ref = 1;
     acquire(&ftable.lock);
     lst_push(&(ftable.file),&(fl->lst));
     // for(f = ftable.file; f < ftable.file + NFILE; f++){
